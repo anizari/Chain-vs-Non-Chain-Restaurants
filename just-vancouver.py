@@ -5,10 +5,14 @@
 
 import sys
 import unicodedata
+from functools import reduce
 
+import matplotlib.pyplot as plt
 import numpy as np
-# from PIL import Image
-# from PIL.ExifTags import GPSTAGS, TAGS
+from pyspark.ml.clustering import (LDA, BisectingKMeans, GaussianMixture,
+                                   KMeans, PowerIterationClustering)
+from pyspark.ml.evaluation import ClusteringEvaluator
+from pyspark.ml.feature import StandardScaler, VectorAssembler
 from pyspark.sql import Row, SparkSession, functions, types
 
 assert sys.version_info >= (3, 5)  # make sure we have Python 3.5+
@@ -44,16 +48,30 @@ def filterData(poi):
     foodArray = ['bar', 'biergarten', 'cafe', 'fast_food',
                  'food_court', 'ice_cream', 'pub', 'restaurant']
 
-    poi = poi.filter(poi['amenity'].isin(foodArray)).cache()
-    poi.show()
+    poi = poi.filter(poi['amenity'].isin(foodArray))
 
-    brands = poi.select(poi['tags']['brand']).distinct().dropna().collect()
+    vecAssembler = VectorAssembler(
+        inputCols=['lat', 'lon'], outputCol="features")
+    poi = vecAssembler.transform(poi).cache()
 
-    for item in brands:
-        normal_item = unicodedata.normalize('NFKD', str(item[0]))
-        print(normal_item.encode('ASCII', 'ignore'))
+    brands = np.array(poi.select(
+        poi['tags']['brand']).distinct().dropna().collect())
+    brands = brands.flatten()
+    brands = list(brands)
 
-    return poi
+    chain = poi.filter(reduce(
+        lambda a, b: a | b, (poi['name'].like('%' + pat + "%") for pat in brands)))
+    # chain.show()
+
+    nonchain = poi.filter(~reduce(
+        lambda a, b: a | b, (poi['name'].like('%' + pat + "%") for pat in brands)))
+    # nonchain.show()
+
+    # for item in brands:
+    #     normal_item = unicodedata.normalize('NFKD', str(item[0]))
+    #     print(normal_item.encode('ASCII', 'ignore'))
+
+    return chain, nonchain
 
 
 def distance(city, stations):
@@ -69,9 +87,169 @@ def distance(city, stations):
     return distance
 
 
+def cluster_KM(data, test_data):
+    # Code from https://towardsdatascience.com/k-means-clustering-using-pyspark-on-big-data-6214beacdc8b
+    # scale = StandardScaler(inputCol='features', outputCol='standardized')
+    # data_scale = scale.fit(data)
+    # data_scale = data_scale.transform(data)
+
+    # evaluator = ClusteringEvaluator(predictionCol='prediction', featuresCol='standardized',
+    #                                 metricName='silhouette', distanceMeasure='squaredEuclidean')
+
+    # # Cost of k
+    # cost = np.zeros(20)
+    # for i in range(2, 20):
+    #     gmm = KMeans(featuresCol='standardized', k=i)
+    #     model = gmm.fit(data_scale)
+
+    #     predictions = model.transform(data_scale)
+    #     cost[i] = evaluator.evaluate(predictions)
+
+    # fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    # ax.plot(range(2, 20), cost[2:20])
+    # ax.set_xlabel('k')
+    # ax.set_ylabel('cost')
+    # plt.show()
+
+    # Code from https://spark.apache.org/docs/latest/ml-clustering.html
+    # Trains a k-means model.
+    kmeans = KMeans(k=13)
+    model = kmeans.fit(data)
+
+    # Make predictions
+    predictions = model.transform(data)
+    test_predictions = model.transform(test_data)
+
+    # Evaluate clustering by computing Silhouette score
+    evaluator = ClusteringEvaluator()
+
+    silhouette = evaluator.evaluate(predictions)
+    test_silhouette = evaluator.evaluate(test_predictions)
+    print("Silhouette with squared euclidean distance = " +
+          str(silhouette) + str(test_silhouette))
+
+    # Shows the result.
+    centers = model.clusterCenters()
+    print("Cluster Centers: ")
+    for center in centers:
+        print(center)
+
+    return predictions, test_predictions
+
+
+def cluster_BKM(data, test_data):
+    # Code from https://towardsdatascience.com/k-means-clustering-using-pyspark-on-big-data-6214beacdc8b
+    # scale = StandardScaler(inputCol='features', outputCol='standardized')
+    # data_scale = scale.fit(data)
+    # data_scale = data_scale.transform(data)
+
+    # evaluator = ClusteringEvaluator(predictionCol='prediction', featuresCol='standardized',
+    #                                 metricName='silhouette', distanceMeasure='squaredEuclidean')
+
+    # # Cost of k
+    # cost = np.zeros(20)
+    # for i in range(2, 20):
+    #     gmm = BisectingKMeans(featuresCol='standardized', k=i)
+    #     model = gmm.fit(data_scale)
+
+    #     predictions = model.transform(data_scale)
+    #     cost[i] = evaluator.evaluate(predictions)
+
+    # fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    # ax.plot(range(2, 20), cost[2:20])
+    # ax.set_xlabel('k')
+    # ax.set_ylabel('cost')
+    # plt.show()
+
+    # Code from https://spark.apache.org/docs/latest/ml-clustering.html
+    # Trains a bisecting k-means model.
+    bkm = BisectingKMeans(k=14)
+    model = bkm.fit(data)
+
+    # Make predictions
+    predictions = model.transform(data)
+    test_predictions = model.transform(test_data)
+
+    # Evaluate clustering by computing Silhouette score
+    evaluator = ClusteringEvaluator()
+
+    silhouette = evaluator.evaluate(predictions)
+    test_silhouette = evaluator.evaluate(test_predictions)
+    print("Silhouette with squared euclidean distance = " +
+          str(silhouette) + str(test_silhouette))
+
+    # Shows the result.
+    print("Cluster Centers: ")
+    centers = model.clusterCenters()
+    for center in centers:
+        print(center)
+
+    return predictions, test_predictions
+
+
+def cluster_GMM(data, test_data):
+    # Code from https://towardsdatascience.com/k-means-clustering-using-pyspark-on-big-data-6214beacdc8b
+    # scale = StandardScaler(inputCol='features', outputCol='standardized')
+    # data_scale = scale.fit(data)
+    # data_scale = data_scale.transform(data)
+
+    # evaluator = ClusteringEvaluator(predictionCol='prediction', featuresCol='standardized',
+    #                                 metricName='silhouette', distanceMeasure='squaredEuclidean')
+
+    # # Cost of k
+    # cost = np.zeros(20)
+    # for i in range(2, 20):
+    #     gmm = GaussianMixture(featuresCol='standardized', k=i)
+    #     model = gmm.fit(data_scale)
+
+    #     predictions = model.transform(data_scale)
+    #     cost[i] = evaluator.evaluate(predictions)
+
+    # fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    # ax.plot(range(2, 20), cost[2:20])
+    # ax.set_xlabel('k')
+    # ax.set_ylabel('cost')
+    # plt.show()
+
+    # Code from https://spark.apache.org/docs/latest/ml-clustering.html
+    # Trains a bisecting gmm model.
+    gmm = GaussianMixture(k=15)
+    model = gmm.fit(data)
+
+    # Make predictions
+    predictions = model.transform(data)
+    test_predictions = model.transform(test_data)
+
+    # Evaluate clustering by computing Silhouette score
+    evaluator = ClusteringEvaluator()
+
+    silhouette = evaluator.evaluate(predictions)
+    test_silhouette = evaluator.evaluate(test_predictions)
+    print("Silhouette with squared euclidean distance = " +
+          str(silhouette) + str(test_silhouette))
+
+    print("Gaussians shown as a DataFrame: ")
+    model.gaussiansDF.show(truncate=False)
+
+    return predictions, test_predictions
+
+
+def ML(data, test_data):
+    km_df, km_test = cluster_KM(data, test_data)
+    bkm_df, bkm_test = cluster_BKM(data, test_data)
+    gmm_df, gmm_test = cluster_GMM(data, test_data)
+
+    return km_df, km_test, bkm_df, bkm_test, gmm_df, gmm_test
+
+
 def main(inputs, output):
     poi = spark.read.json(inputs, schema=amenity_schema)
-    poi = filterData(poi)
+    chain, nonchain = filterData(poi)
+    chain = chain.cache()
+    nonchain = nonchain.cache()
+
+    chain_km, nonchain_km, chain_bkm, nonchain_bkm, chain_gmm, nonchain_gmm = ML(
+        chain, nonchain)
 
     # poi.show()
     poi = poi.coalesce(1)  # ~1MB after the filtering
@@ -81,5 +259,4 @@ def main(inputs, output):
 if __name__ == '__main__':
     inputs = sys.argv[1]
     output = sys.argv[2]
-    # imgFolder = sys.argv[3]
     main(inputs, output)

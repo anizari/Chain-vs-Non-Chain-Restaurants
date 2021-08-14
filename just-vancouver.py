@@ -481,6 +481,7 @@ def main(inputs, output):
     counts_plt.legend(fontsize=14)
     counts_fig = counts_plt.get_figure()
     counts_fig.set_size_inches(16, 9)
+    counts_fig.suptitle('Restaurant Counts per Region', fontsize=16)
     counts_fig.savefig('figures/counts.png')
 
     # Convert pypark dataframes to panda dataframe for plotting

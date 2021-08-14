@@ -14,5 +14,7 @@ Make sure to have PySpark setup for your environment
 Navigate to project folder and run the following line in a terminal:
 
 ```
-spark-submit
+spark-submit just-vancouver.py amenities-vancouver.json.gz output
 ```
+
+The code above will produce an output folder/directory and all the images will be produced in the figures folder/directory 
